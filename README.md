@@ -32,3 +32,14 @@ pnpm build
 O papel Super Admin pertence exclusivamente ao dono do Caixly e não pode ser
 visualizado, criado ou atribuído por empresas clientes. Autorizações sensíveis
 devem ser validadas no servidor e registradas em trilha de auditoria.
+
+## Deploy na Cloudflare
+
+O workflow `.github/workflows/deploy-cloudflare.yml` valida e publica a branch
+`main` no Cloudflare Workers. Configure estes secrets no GitHub:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+
+O token deve ter somente as permissões necessárias para editar Workers na conta
+que hospedará o Caixly. Nunca salve tokens no repositório.
