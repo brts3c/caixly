@@ -40,3 +40,8 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/.npm-cache/
+/.pnpm-store/
+/.dev-output.log
+/.dev-error.log
+*.tsbuildinfo
