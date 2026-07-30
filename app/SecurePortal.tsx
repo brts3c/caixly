@@ -35,6 +35,16 @@ type SaleRow = {
 };
 type TenantRow = { id: string; trade_name: string; legal_name: string; status: string };
 type SubscriptionRow = { tenant_id: string; plan_code: PlanCode; status: string };
+type AuditRow = {
+  id: number;
+  tenant_id: string | null;
+  actor_user_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
 
 type PortalState = {
   loading: boolean;
@@ -52,6 +62,7 @@ type PortalState = {
   tenants: TenantRow[];
   subscriptions: SubscriptionRow[];
   allStores: Store[];
+  auditLogs: AuditRow[];
   refresh: () => Promise<void>;
   setCurrentStoreId: (id: string) => void;
 };
@@ -72,6 +83,7 @@ const EMPTY: PortalState = {
   tenants: [],
   subscriptions: [],
   allStores: [],
+  auditLogs: [],
   refresh: async () => undefined,
   setCurrentStoreId: () => undefined,
 };
@@ -118,10 +130,11 @@ function usePortalLoader() {
       "Usuário";
 
     if (owner) {
-      const [{ data: tenants }, { data: subscriptions }, { data: allStores }] = await Promise.all([
+      const [{ data: tenants }, { data: subscriptions }, { data: allStores }, { data: auditLogs }] = await Promise.all([
         supabase.from("tenants").select("id,trade_name,legal_name,status").order("created_at", { ascending: false }),
         supabase.from("subscriptions").select("tenant_id,plan_code,status"),
         supabase.from("stores").select("id,tenant_id,name"),
+        supabase.from("audit_logs").select("id,tenant_id,actor_user_id,action,entity_type,entity_id,metadata,created_at").order("created_at", { ascending: false }).limit(100),
       ]);
       setState({
         ...EMPTY,
@@ -133,6 +146,7 @@ function usePortalLoader() {
         tenants: (tenants || []) as TenantRow[],
         subscriptions: (subscriptions || []) as SubscriptionRow[],
         allStores: (allStores || []) as Store[],
+        auditLogs: (auditLogs || []) as AuditRow[],
       });
       return;
     }
@@ -462,17 +476,152 @@ function Team() {
 
 function OwnerPanel() {
   const portal = usePortal();
+  const [section, setSection] = useState<"overview" | "companies" | "subscriptions" | "plans" | "audit">("overview");
+  const [query, setQuery] = useState("");
+  const [managing, setManaging] = useState<TenantRow | null>(null);
+  const [managedPlan, setManagedPlan] = useState<PlanCode>("free");
+  const [managedStatus, setManagedStatus] = useState("trial");
+  const [saving, setSaving] = useState(false);
   const active = portal.tenants.filter(tenant => tenant.status === "active" || tenant.status === "trial").length;
   const pastDue = portal.tenants.filter(tenant => tenant.status === "past_due" || tenant.status === "blocked").length;
-  return <div className="saas-owner"><aside><Brand/><span>PAINEL INTERNO</span><nav><button className="active">◆ Visão global</button></nav><div><small>ACESSO EXCLUSIVO</small><b>{portal.email}</b><p>Este papel não pode ser delegado.</p></div></aside><main>
-    <header><div><small>PAINEL DO FUNDADOR</small><h1>Visão global do Caixly</h1><p>Dados reais da plataforma, isolados das áreas dos clientes.</p></div><span className="owner-lock">🔒 Super Admin exclusivo</span></header>
-    <div className="owner-metrics"><Metric title="Empresas" value={String(portal.tenants.length)}/><Metric title="Ativas / teste" value={String(active)}/><Metric title="Com pendência" value={String(pastDue)}/><Metric title="Administrador" value={portal.email}/></div>
-    <section className="dash-card owner-tenants"><div className="card-title"><div><small>CLIENTES DO SAAS</small><h3>Empresas cadastradas</h3></div></div>{portal.tenants.length ? <table><thead><tr><th>Empresa</th><th>Plano</th><th>Lojas</th><th>Status</th></tr></thead><tbody>{portal.tenants.map(tenant => {
+  const prices: Record<PlanCode, number> = { free: 0, essential: 49.9, professional: 79.9, unlimited: 119.9 };
+  const planOf = (tenantId: string): PlanCode =>
+    portal.subscriptions.find(item => item.tenant_id === tenantId)?.plan_code || "free";
+  const statusLabel = (status: string) => ({
+    trial: "Em teste", active: "Ativa", past_due: "Inadimplente", blocked: "Bloqueada",
+    cancelled: "Cancelada", trialing: "Em teste", canceled: "Cancelada",
+  }[status] || status);
+  const monthlyRevenue = portal.tenants.reduce((total, tenant) =>
+    tenant.status === "active" || tenant.status === "trial" ? total + prices[planOf(tenant.id)] : total, 0);
+  const visibleTenants = portal.tenants.filter(tenant =>
+    `${tenant.trade_name} ${tenant.legal_name}`.toLowerCase().includes(query.toLowerCase()));
+  const openManager = (tenant: TenantRow) => {
+    setManaging(tenant);
+    setManagedPlan(planOf(tenant.id));
+    setManagedStatus(tenant.status);
+  };
+  const saveTenant = async () => {
+    if (!managing) return;
+    setSaving(true);
+    const { error } = await getSupabaseBrowserClient().rpc("platform_manage_tenant", {
+      target_tenant: managing.id,
+      new_status: managedStatus,
+      new_plan_code: managedPlan,
+    });
+    if (error) {
+      notify(error.message);
+      setSaving(false);
+      return;
+    }
+    await portal.refresh();
+    setSaving(false);
+    setManaging(null);
+    notify("Empresa atualizada e ação registrada na auditoria.");
+  };
+  const logout = async () => {
+    await getSupabaseBrowserClient().auth.signOut();
+    navigate("/Login");
+  };
+  const navItems = [
+    ["overview", "◆", "Visão global"],
+    ["companies", "▦", "Empresas"],
+    ["subscriptions", "◈", "Assinaturas"],
+    ["plans", "◇", "Planos"],
+    ["audit", "◎", "Auditoria"],
+  ] as const;
+  const titles = {
+    overview: ["Visão global do Caixly", "Acompanhe clientes, receita estimada e pendências da plataforma."],
+    companies: ["Empresas clientes", "Gerencie o plano e o acesso de cada empresa com segurança."],
+    subscriptions: ["Assinaturas", "Controle o plano comercial e o estado de cada assinatura."],
+    plans: ["Planos do Caixly", "Regras comerciais e limites aplicados no banco de dados."],
+    audit: ["Auditoria da plataforma", "Histórico das ações administrativas realizadas no SaaS."],
+  };
+  const tenantTable = (rows: TenantRow[]) => rows.length ? <div className="owner-table-wrap"><table>
+    <thead><tr><th>Empresa</th><th>Plano</th><th>Lojas</th><th>Status</th><th></th></tr></thead>
+    <tbody>{rows.map(tenant => {
       const subscription = portal.subscriptions.find(item => item.tenant_id === tenant.id);
       const stores = portal.allStores.filter(store => store.tenant_id === tenant.id).length;
-      return <tr key={tenant.id}><td><b>{tenant.trade_name}</b></td><td>{PLAN_LABELS[subscription?.plan_code || "free"]}</td><td>{stores}</td><td>{tenant.status}</td></tr>;
-    })}</tbody></table> : <EmptyState title="Nenhum cliente ainda" text="As empresas aparecerão aqui quando concluírem a configuração inicial."/>}</section>
-  </main></div>;
+      return <tr key={tenant.id}>
+        <td><b>{tenant.trade_name}</b><small>{tenant.legal_name}</small></td>
+        <td>{PLAN_LABELS[subscription?.plan_code || "free"]}</td>
+        <td>{stores}</td>
+        <td><span className={`owner-status ${tenant.status}`}>{statusLabel(tenant.status)}</span></td>
+        <td><button className="owner-action" onClick={() => openManager(tenant)}>Gerenciar →</button></td>
+      </tr>;
+    })}</tbody>
+  </table></div> : <EmptyState title="Nenhum cliente encontrado" text="As empresas aparecerão aqui após concluírem a configuração inicial."/>;
+
+  return <div className="saas-owner">
+    <aside>
+      <button className="owner-brand" onClick={() => setSection("overview")}><Brand/></button>
+      <span>PAINEL INTERNO</span>
+      <nav>{navItems.map(([key, icon, label]) =>
+        <button key={key} className={section === key ? "active" : ""} onClick={() => setSection(key)}>
+          <i>{icon}</i><b>{label}</b>
+        </button>)}</nav>
+      <div className="owner-account"><small>ACESSO EXCLUSIVO</small><b>{portal.email}</b><p>Este papel não pode ser delegado.</p><button onClick={logout}>Sair da conta</button></div>
+    </aside>
+    <main>
+      <div className="owner-topbar">
+        <button className="owner-back" onClick={() => navigate("/")}>← Voltar ao site</button>
+        <div><button onClick={() => void portal.refresh()}>↻ Atualizar</button><span className="owner-lock">🔒 Super Admin exclusivo</span></div>
+      </div>
+      <header><div><small>PAINEL DO FUNDADOR</small><h1>{titles[section][0]}</h1><p>{titles[section][1]}</p></div></header>
+
+      {section === "overview" && <>
+        <div className="owner-metrics"><Metric title="Empresas" value={String(portal.tenants.length)}/><Metric title="Ativas / teste" value={String(active)}/><Metric title="Com pendência" value={String(pastDue)}/><Metric title="MRR estimado" value={money(monthlyRevenue)}/></div>
+        <div className="owner-quick-grid">
+          <button onClick={() => setSection("companies")}><span>▦</span><div><b>Gerenciar empresas</b><small>Planos, bloqueios e acesso</small></div><i>→</i></button>
+          <button onClick={() => setSection("subscriptions")}><span>◈</span><div><b>Ver assinaturas</b><small>Receita e situação comercial</small></div><i>→</i></button>
+          <button onClick={() => setSection("audit")}><span>◎</span><div><b>Abrir auditoria</b><small>Histórico administrativo</small></div><i>→</i></button>
+        </div>
+        <section className="dash-card owner-tenants"><div className="card-title"><div><small>CLIENTES DO SAAS</small><h3>Empresas recentes</h3></div><button className="owner-link" onClick={() => setSection("companies")}>Ver todas →</button></div>{tenantTable(portal.tenants.slice(0, 8))}</section>
+      </>}
+
+      {section === "companies" && <section className="dash-card owner-tenants owner-section-card">
+        <div className="owner-toolbar"><div><small>CLIENTES DO SAAS</small><h3>{visibleTenants.length} empresas</h3></div><input aria-label="Buscar empresa" value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por nome da empresa..."/></div>
+        {tenantTable(visibleTenants)}
+      </section>}
+
+      {section === "subscriptions" && <section className="dash-card owner-tenants owner-section-card">
+        <div className="card-title"><div><small>CONTROLE COMERCIAL</small><h3>Assinaturas ativas e pendentes</h3></div></div>
+        {portal.tenants.length ? <div className="owner-table-wrap"><table><thead><tr><th>Empresa</th><th>Plano</th><th>Situação</th><th>Valor estimado</th><th></th></tr></thead><tbody>
+          {portal.tenants.map(tenant => {
+            const subscription = portal.subscriptions.find(item => item.tenant_id === tenant.id);
+            const plan = subscription?.plan_code || "free";
+            return <tr key={tenant.id}><td><b>{tenant.trade_name}</b></td><td>{PLAN_LABELS[plan]}</td><td>{statusLabel(subscription?.status || tenant.status)}</td><td><b>{money(prices[plan])}</b><small>/mês</small></td><td><button className="owner-action" onClick={() => openManager(tenant)}>Alterar →</button></td></tr>;
+          })}
+        </tbody></table></div> : <EmptyState title="Nenhuma assinatura" text="As assinaturas são criadas junto com cada nova empresa."/>}
+      </section>}
+
+      {section === "plans" && <div className="owner-plan-grid">
+        {(["free", "essential", "professional", "unlimited"] as PlanCode[]).map(plan => <section key={plan} className={`owner-plan-card ${plan === "professional" ? "featured" : ""}`}>
+          {plan === "professional" && <em>MAIS POPULAR</em>}<small>PLANO</small><h2>{PLAN_LABELS[plan]}</h2><b>{prices[plan] ? money(prices[plan]) : "Grátis"}{prices[plan] > 0 && <i>/mês</i>}</b>
+          <ul><li>{PLAN_LIMITS[plan] === null ? "Produtos ilimitados" : `Até ${PLAN_LIMITS[plan]} produtos`}</li><li>Usuários e lojas com RBAC</li><li>Dados isolados por empresa</li></ul>
+          <button onClick={() => { setQuery(""); setSection("companies"); }}>Gerenciar clientes →</button>
+        </section>)}
+      </div>}
+
+      {section === "audit" && <section className="dash-card owner-section-card">
+        <div className="card-title"><div><small>SEGURANÇA</small><h3>Últimos 100 eventos</h3></div></div>
+        {portal.auditLogs.length ? <div className="owner-audit-list">{portal.auditLogs.map(log => {
+          const tenant = portal.tenants.find(item => item.id === log.tenant_id);
+          return <article key={log.id}><span>◎</span><div><b>{log.action}</b><p>{tenant?.trade_name || "Plataforma"} · {log.entity_type}{log.entity_id ? ` · ${log.entity_id.slice(0, 8)}` : ""}</p></div><time>{new Date(log.created_at).toLocaleString("pt-BR")}</time></article>;
+        })}</div> : <EmptyState title="Nenhum evento registrado" text="As ações administrativas futuras aparecerão aqui."/>}
+      </section>}
+    </main>
+
+    {managing && <div className="owner-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setManaging(null); }}>
+      <section className="owner-modal" role="dialog" aria-modal="true" aria-labelledby="manage-company-title">
+        <button className="owner-modal-close" aria-label="Fechar" onClick={() => setManaging(null)}>×</button>
+        <small>ADMINISTRAÇÃO DA EMPRESA</small><h2 id="manage-company-title">{managing.trade_name}</h2><p>{managing.legal_name}</p>
+        <label>Plano<select value={managedPlan} onChange={event => setManagedPlan(event.target.value as PlanCode)}><option value="free">Gratuito · 5 produtos</option><option value="essential">Essential · 15 produtos</option><option value="professional">Professional · 30 produtos</option><option value="unlimited">Ilimitado · tudo liberado</option></select></label>
+        <label>Status de acesso<select value={managedStatus} onChange={event => setManagedStatus(event.target.value)}><option value="trial">Em teste</option><option value="active">Ativa</option><option value="past_due">Inadimplente</option><option value="blocked">Bloqueada</option><option value="cancelled">Cancelada</option></select></label>
+        {(managedStatus === "blocked" || managedStatus === "cancelled") && <div className="owner-danger-note">A empresa perderá o acesso ao sistema. A alteração ficará registrada na auditoria.</div>}
+        <div className="owner-modal-actions"><button className="owner-cancel" onClick={() => setManaging(null)}>Cancelar</button><button className="owner-save" disabled={saving} onClick={saveTenant}>{saving ? "Salvando..." : "Salvar alterações"}</button></div>
+      </section>
+    </div>}
+  </div>;
 }
 
 function FirstSetup() {

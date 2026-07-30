@@ -32,5 +32,10 @@ test("a implementação segura não contém credenciais ou identidade demonstrat
   assert.match(portal, /platformOwner/);
   assert.match(portal, /canAccessRoute/);
   assert.match(portal, /PLAN_LIMITS/);
+  assert.match(portal, /platform_manage_tenant/);
+  assert.match(portal, /Voltar ao site/);
+  assert.match(portal, /Empresas/);
+  assert.match(portal, /Assinaturas/);
+  assert.match(portal, /Auditoria/);
   assert.match(auth, /SecurePortal/);
 });
