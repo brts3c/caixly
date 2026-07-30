@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
+import { SecurePortal } from "./SecurePortal";
 
 type Product = {
   id: number;
@@ -238,7 +239,7 @@ function Landing() {
             ["Gratuito","R$ 0","Para começar hoje",["Até 5 produtos","PDV completo","Dashboard básico"]],
             ["Essencial","R$ 49,90","Para organizar a rotina",["Até 15 produtos","Relatórios e histórico","Exportação de dados"]],
             ["Profissional","R$ 79,90","Para crescer com controle",["Até 30 produtos","Gráficos avançados","Suporte prioritário"]],
-            ["Premium","R$ 119,90","Para ir mais longe",["Produtos ilimitados","Insights inteligentes","Personalização completa"]],
+            ["Ilimitado","R$ 119,90","Para ir mais longe",["Produtos ilimitados","Insights inteligentes","Personalização completa"]],
           ].map(([name,price,desc,features],i)=><div className={`price-card ${i===2?"featured":""}`} key={name as string}>{i===2&&<span className="popular">MAIS ESCOLHIDO</span>}<h3>{name as string}</h3><p>{desc as string}</p><b>{price as string}<small>{i===0?"":"/mês"}</small></b><ul>{(features as string[]).map(f=><li key={f}>✓ {f}</li>)}</ul><button className={`button ${i===2?"primary":"outline"}`} onClick={()=>navigate("/CheckIn")}>{i===0?"Começar grátis":"Escolher plano"}</button></div>)}
         </div>
       </section>
@@ -284,6 +285,8 @@ function CheckIn() {
       if(mode==="login"){
         const {data,error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
         if(error)throw error;
+        const {data:platformOwner}=await supabase.from("platform_admins").select("user_id").eq("user_id",data.user.id).maybeSingle();
+        if(platformOwner){navigate("/SaaSAdmin");return}
         const {data:membership,error:membershipError}=await supabase.from("tenant_memberships").select("tenant_id").eq("user_id",data.user.id).eq("active",true).limit(1).maybeSingle();
         if(membershipError)throw membershipError;
         navigate(membership?"/Home":"/Onboarding");
@@ -425,7 +428,7 @@ function SegmentPage({name,emoji}:{name:string,emoji:string}) {
 function InfoPage({kind}:{kind:string}) {
   const pages:Record<string,{eyebrow:string,title:string,description:string,items:string[]}>={
     funcionalidades:{eyebrow:"RECURSOS",title:"Tudo para operar com segurança.",description:"PDV, produtos, relatórios, configurações e controle de acesso em uma experiência simples.",items:["Frente de caixa rápida e responsiva","Produtos, adicionais e disponibilidade","Relatórios e exportação de vendas","Controle de equipe com RBAC","Configurações por loja e filial","Auditoria de operações críticas"]},
-    precos:{eyebrow:"PLANOS",title:"Um plano para cada fase.",description:"Comece gratuitamente e evolua quando sua operação precisar.",items:["Gratuito — até 5 produtos","Essencial — R$ 49,90/mês","Profissional — R$ 79,90/mês","Premium — R$ 119,90/mês"]},
+    precos:{eyebrow:"PLANOS",title:"Um plano para cada fase.",description:"Comece gratuitamente e evolua quando sua operação precisar.",items:["Gratuito — até 5 produtos","Essencial — até 15 produtos","Profissional — até 30 produtos","Ilimitado — todos os produtos"]},
     sobre:{eyebrow:"SOBRE O CAIXLY",title:"Tecnologia que respeita a rotina do balcão.",description:"O Caixly nasceu para tornar a gestão de pequenos negócios mais simples, clara e segura.",items:["Construído para o varejo brasileiro","Experiência simples no celular e computador","Decisões guiadas por dados úteis","Segurança desde a arquitetura"]},
     privacidade:{eyebrow:"PRIVACIDADE",title:"Seus dados, sob controle.",description:"Aplicamos isolamento entre empresas, acesso por função, minimização de dados e rastreabilidade.",items:["Isolamento lógico por tenant","Privilégio mínimo por usuário","Auditoria de ações sensíveis","Retenção e exclusão conforme LGPD"]},
     termos:{eyebrow:"TERMOS DE USO",title:"Regras claras para uma relação simples.",description:"Esta versão apresenta um resumo demonstrativo. Os termos jurídicos finais serão revisados antes da operação comercial.",items:["Uso responsável da plataforma","Responsabilidade sobre cadastros e usuários","Disponibilidade e suporte","Cobrança e cancelamento transparentes"]},
@@ -452,14 +455,7 @@ function CaixlyRoute() {
   if(!authReady||(needsAuth&&!signedIn))return <main className="auth-loading"><Logo/><span>Verificando seu acesso...</span></main>;
   if(path==="/"||path==="/Index"||path==="/LandingPage") return <Landing/>;
   if(path==="/CheckIn"||path==="/acesso"||path==="/Login"||path==="/Register") return <CheckIn/>;
-  if(path==="/Home") return <HomeDashboard/>;
-  if(path==="/PDV") return <PointOfSale/>;
-  if(path==="/Dashboard"||path==="/DashboardPremium") return <Analytics/>;
-  if(path==="/Produtos"||path==="/ProductsManagement"||path==="/ProdutosNovo") return <Products/>;
-  if(path==="/ConfiguracoesLoja"||path==="/Admin") return <Settings/>;
-  if(path==="/Equipe") return <AccessManagement/>;
-  if(path==="/SaaSAdmin") return <SaaSOwnerPanel/>;
-  if(path==="/Onboarding") return <Onboarding/>;
+  if(privatePaths.includes(path)) return <SecurePortal path={path}/>;
   const segment=SEGMENTS.find(s=>s[2]===path);
   if(segment) return <SegmentPage emoji={segment[0]} name={segment[1]}/>;
   const infoKind=path.replace("/","");
