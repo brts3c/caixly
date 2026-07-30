@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Product = {
   id: number;
@@ -134,10 +135,23 @@ function Icon({ children }: { children: React.ReactNode }) {
   return <span className="icon">{children}</span>;
 }
 
+function InputModal({title,label,initialValue="",inputType="text",confirmLabel="Confirmar",onConfirm,onClose}:{title:string;label:string;initialValue?:string;inputType?:string;confirmLabel?:string;onConfirm:(value:string)=>void;onClose:()=>void}) {
+  const [value,setValue]=useState(initialValue);
+  return <div className="modal-backdrop" role="presentation"><form className="input-modal" onSubmit={event=>{event.preventDefault();onConfirm(value)}}><div><small>CAIXLY</small><h2>{title}</h2></div><label>{label}<input autoFocus type={inputType} value={value} onChange={event=>setValue(event.target.value)} /></label><div><button type="button" className="button outline" onClick={onClose}>Cancelar</button><button type="submit" className="button primary">{confirmLabel}</button></div></form></div>;
+}
+
 function navigate(path: string) {
   window.history.pushState({}, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function goBack(fallback = "/Home") {
+  if (window.history.length > 1) {
+    window.history.back();
+    return;
+  }
+  navigate(fallback);
 }
 
 function PublicHeader() {
@@ -240,12 +254,68 @@ function Footer() {
 }
 
 function CheckIn() {
-  return <main className="auth-page"><div className="auth-visual"><Logo /><div><span className="quote">“</span><h1>Agora eu sei o que vende,<br />quanto vende e <em>quando.</em></h1><p>O Caixly tirou meu negócio do caderno e me deu tempo para cuidar do que importa.</p><div className="person"><span>MC</span><div><b>Mariana Costa</b><small>Bosque Açaí • Guarulhos, SP</small></div></div></div><small>Mais de 2.000 negócios conectados</small></div><div className="auth-form"><div><button className="back" onClick={()=>navigate("/LandingPage")}>← Voltar</button><small>BEM-VINDO AO CAIXLY</small><h2>Entre na sua conta</h2><p>Acesse seu PDV e continue vendendo.</p><label>E-mail<input defaultValue="demo@caixly.com.br" type="email" /></label><label>Senha<input defaultValue="123456" type="password" /></label><div className="form-row"><label className="check"><input type="checkbox" defaultChecked /> Lembrar de mim</label><button className="link-button" onClick={()=>notify("Enviamos as instruções para o e-mail de demonstração.")}>Esqueci minha senha</button></div><button className="button primary full" onClick={()=>navigate("/Home")}>Entrar na minha conta →</button><div className="divider"><span /> ou <span /></div><button className="button google full" onClick={()=>{notify("Login de demonstração realizado.");navigate("/Home")}}><b>G</b> Continuar com Google</button><p className="signup">Ainda não tem conta? <button onClick={()=>navigate("/Onboarding")}>Comece grátis</button></p></div></div></main>;
+  const [mode,setMode]=useState<"login"|"signup"|"reset">("login");
+  const [email,setEmail]=useState("demo@caixly.com.br");
+  const [password,setPassword]=useState("123456");
+  const [fullName,setFullName]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [feedback,setFeedback]=useState("");
+
+  const submit=async()=>{
+    setFeedback("");
+    if(!email.trim()){setFeedback("Informe seu e-mail.");return}
+    if(mode!=="reset"&&password.length<6){setFeedback("A senha precisa ter pelo menos 6 caracteres.");return}
+    setLoading(true);
+    try{
+      if(!isSupabaseConfigured()){
+        if(mode==="login"&&email.toLowerCase()==="demo@caixly.com.br"&&password==="123456"){
+          notify("Login de demonstração realizado.");
+          navigate("/Home");
+        }else if(mode==="signup"){
+          navigate("/Onboarding");
+        }else if(mode==="reset"){
+          setFeedback("Modo demonstração: use demo@caixly.com.br e senha 123456.");
+        }else{
+          setFeedback("Enquanto o Supabase não está conectado, use a conta de demonstração.");
+        }
+        return;
+      }
+      const supabase=getSupabaseBrowserClient();
+      if(mode==="login"){
+        const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
+        if(error)throw error;
+        navigate("/Home");
+      }else if(mode==="signup"){
+        const {error}=await supabase.auth.signUp({email:email.trim(),password,options:{data:{full_name:fullName.trim()}}});
+        if(error)throw error;
+        setFeedback("Conta criada. Confira seu e-mail para confirmar o acesso.");
+      }else{
+        const {error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/Login`});
+        if(error)throw error;
+        setFeedback("Enviamos o link de recuperação para seu e-mail.");
+      }
+    }catch(error){
+      setFeedback(error instanceof Error?error.message:"Não foi possível concluir. Tente novamente.");
+    }finally{setLoading(false)}
+  };
+
+  const google=async()=>{
+    if(!isSupabaseConfigured()){notify("Login de demonstração realizado.");navigate("/Home");return}
+    const {error}=await getSupabaseBrowserClient().auth.signInWithOAuth({provider:"google",options:{redirectTo:`${window.location.origin}/Home`}});
+    if(error)setFeedback(error.message);
+  };
+
+  return <main className="auth-page"><div className="auth-visual"><Logo /><div><span className="quote">“</span><h1>Venda, organize e acompanhe<br />seu negócio <em>em um só lugar.</em></h1><p>Cada pessoa entra com seu próprio acesso: administrador, gerente ou operador de caixa.</p><div className="person"><span>✓</span><div><b>Acesso protegido por função</b><small>Empresa e filial separadas com segurança</small></div></div></div><small>Caixly • PDV e gestão</small></div><div className="auth-form"><div><button className="back" onClick={()=>goBack("/LandingPage")}>← Voltar</button><div className="auth-tabs"><button className={mode==="login"?"active":""} onClick={()=>{setMode("login");setFeedback("")}}>Entrar</button><button className={mode==="signup"?"active":""} onClick={()=>{setMode("signup");setFeedback("")}}>Criar conta</button></div><small>{mode==="login"?"ACESSO AO PORTAL":mode==="signup"?"COMECE AGORA":"RECUPERAR ACESSO"}</small><h2>{mode==="login"?"Entre na sua conta":mode==="signup"?"Crie sua conta":"Esqueceu a senha?"}</h2><p>{mode==="login"?"Acesse o PDV e a gestão da sua empresa.":mode==="signup"?"Cadastre o dono da empresa para começar.":"Informe o e-mail usado no Caixly."}</p>{mode==="signup"&&<label>Nome completo<input value={fullName} onChange={e=>setFullName(e.target.value)} autoComplete="name" placeholder="Seu nome" /></label>}<label>E-mail<input value={email} onChange={e=>setEmail(e.target.value)} type="email" autoComplete="email" placeholder="voce@empresa.com.br" /></label>{mode!=="reset"&&<label>Senha<input value={password} onChange={e=>setPassword(e.target.value)} type="password" autoComplete={mode==="login"?"current-password":"new-password"} /></label>}{feedback&&<div className="auth-feedback" role="status">{feedback}</div>}{mode==="login"&&<div className="form-row"><label className="check"><input type="checkbox" defaultChecked /> Lembrar de mim</label><button className="link-button" onClick={()=>{setMode("reset");setFeedback("")}}>Esqueci minha senha</button></div>}<button className="button primary full" disabled={loading} onClick={submit}>{loading?"Aguarde...":mode==="login"?"Entrar no portal →":mode==="signup"?"Criar minha conta →":"Enviar link →"}</button>{mode!=="reset"&&<><div className="divider"><span /> ou <span /></div><button className="button google full" onClick={google}><b>G</b> Continuar com Google</button></>}{mode==="reset"&&<p className="signup">Lembrou a senha? <button onClick={()=>setMode("login")}>Voltar ao login</button></p>}<div className="demo-access"><b>Acesso de demonstração</b><span>demo@caixly.com.br • senha 123456</span></div></div></div></main>;
 }
 
 function AppShell({ active, children }: { active: string; children: React.ReactNode }) {
   const [open,setOpen]=useState(false);
-  return <div className="app-shell"><aside className={open?"open":""}><button className="brand-button" onClick={()=>navigate("/Home")}><Logo /></button><nav>{[["⌂","Início","/Home"],["⊕","Novo pedido","/PDV"],["▦","Dashboard","/Dashboard"],["▤","Produtos","/Produtos"],["♙","Equipe e acessos","/Equipe"],["⚙","Configurações","/ConfiguracoesLoja"]].map(([i,n,p])=><button className={active===n?"active":""} key={n} onClick={()=>{navigate(p);setOpen(false)}}><span>{i}</span>{n}</button>)}</nav><div className="side-bottom"><div className="plan-mini"><small>PLANO PROFISSIONAL</small><div><span><i style={{width:"72%"}} /></span><b>18/30</b></div><em>produtos cadastrados</em><button onClick={()=>navigate("/precos")}>Ver planos →</button></div><button className="account" onClick={()=>notify("Perfil de demonstração: Mariana Costa.")}><span>MC</span><div><b>Mariana Costa</b><small>demo@caixly.com.br</small></div><i>⋮</i></button></div></aside>{open&&<div className="aside-backdrop" onClick={()=>setOpen(false)} />}<div className="app-content"><header className="app-top"><button className="menu" onClick={()=>setOpen(true)}>☰</button><button className="store-select" onClick={()=>navigate("/ConfiguracoesLoja")}><span>🥣</span><div><small>ESTABELECIMENTO</small><b>Bosque Açaí <i>⌄</i></b></div></button><div className="top-actions"><button aria-label="Ajuda" onClick={()=>notify("Central de ajuda aberta. Fale conosco em suporte@caixly.com.br")}>?</button><button aria-label="Notificações" onClick={()=>notify("Você não tem novas notificações.")}>♧<i /></button><span className="online"><i /> Caixa online</span></div></header>{children}</div></div>;
+  const [storeOpen,setStoreOpen]=useState(false);
+  const [profileOpen,setProfileOpen]=useState(false);
+  const [noticesOpen,setNoticesOpen]=useState(false);
+  const navItems=[["⌂","Início","Visão geral","/Home"],["⊕","Novo pedido","Frente de caixa","/PDV"],["▦","Dashboard","Relatórios","/Dashboard"],["▤","Produtos","Produtos e estoque","/Produtos"],["♙","Equipe e acessos","Equipe e acessos","/Equipe"],["⚙","Configurações","Configurações da loja","/ConfiguracoesLoja"]];
+  const logout=async()=>{if(isSupabaseConfigured())await getSupabaseBrowserClient().auth.signOut();navigate("/Login")};
+  return <div className="app-shell"><aside className={open?"open":""}><button className="brand-button" onClick={()=>navigate("/Home")} aria-label="Ir para o início"><Logo /></button><nav aria-label="Menu principal">{navItems.map(([i,key,label,p])=><button aria-current={active===key?"page":undefined} className={active===key?"active":""} key={key} onClick={()=>{navigate(p);setOpen(false)}}><span>{i}</span><span className="nav-copy"><b>{label}</b><small>{p==="/PDV"?"Registrar vendas":p==="/Dashboard"?"Vendas e indicadores":p==="/Produtos"?"Catálogo e disponibilidade":p==="/Equipe"?"Usuários e permissões":p==="/ConfiguracoesLoja"?"Loja, segurança e plano":"Resumo do negócio"}</small></span></button>)}</nav><div className="side-bottom"><div className="plan-mini"><small>PLANO PROFISSIONAL</small><div><span><i style={{width:"72%"}} /></span><b>18/30</b></div><em>produtos cadastrados</em><button onClick={()=>navigate("/precos")}>Ver planos →</button></div><div className="account-wrap"><button className="account" aria-expanded={profileOpen} onClick={()=>setProfileOpen(!profileOpen)}><span>MC</span><div><b>Mariana Costa</b><small>Administrador da empresa</small></div><i>⋮</i></button>{profileOpen&&<div className="account-menu"><button onClick={()=>navigate("/ConfiguracoesLoja")}>⚙ Meu perfil e loja</button><button onClick={logout}>↪ Sair do portal</button></div>}</div></div></aside>{open&&<div className="aside-backdrop" onClick={()=>setOpen(false)} />}<div className="app-content"><header className="app-top"><button className="menu" aria-label="Abrir menu" onClick={()=>setOpen(true)}>☰</button><div className="page-context"><button className="back-button" onClick={()=>goBack()}>← Voltar</button><span>Caixly / <b>{navItems.find(item=>item[1]===active)?.[2]??active}</b></span></div><div className="header-popover-wrap"><button className="store-select" aria-expanded={storeOpen} onClick={()=>setStoreOpen(!storeOpen)}><span>🥣</span><div><small>FILIAL ATUAL</small><b>Bosque Açaí — Centro <i>⌄</i></b></div></button>{storeOpen&&<div className="header-popover store-popover"><b>Trocar de filial</b><button className="selected">✓ Bosque Açaí — Centro</button><button onClick={()=>{notify("Filial Jardim selecionada.");setStoreOpen(false)}}>Bosque Açaí — Jardim</button><button onClick={()=>navigate("/ConfiguracoesLoja")}>⚙ Gerenciar filiais</button></div>}</div><div className="top-actions"><button aria-label="Central de ajuda" onClick={()=>navigate("/funcionalidades")}>?</button><div className="header-popover-wrap"><button aria-label="Notificações" aria-expanded={noticesOpen} onClick={()=>setNoticesOpen(!noticesOpen)}>♧<i /></button>{noticesOpen&&<div className="header-popover notices-popover"><b>Notificações</b><p>Seu caixa está online e sincronizado.</p><small>Nenhuma pendência no momento.</small></div>}</div><span className="online"><i /> Caixa online</span></div></header>{children}</div></div>;
 }
 
 function HomeDashboard() {
@@ -264,6 +334,7 @@ function PointOfSale() {
   const [discount,setDiscount]=useState(0);
   const [mobileCart,setMobileCart]=useState(false);
   const [success,setSuccess]=useState(false);
+  const [editor,setEditor]=useState<"customer"|"discount"|null>(null);
   const categories=["Todos","Açaí","Lanches","Acompanhamentos","Bebidas","Doces"];
   const shown=(category==="Todos"?PRODUCTS:PRODUCTS.filter(p=>p.category===category)).filter(p=>p.name.toLowerCase().includes(query.toLowerCase()));
   const subtotal=cart.reduce((s,i)=>s+i.price*i.qty,0);
@@ -271,9 +342,9 @@ function PointOfSale() {
   const add=(p:Product)=>setCart(prev=>prev.some(x=>x.id===p.id)?prev.map(x=>x.id===p.id?{...x,qty:x.qty+1}:x):[...prev,{...p,qty:1}]);
   const qty=(id:number,d:number)=>setCart(prev=>prev.map(x=>x.id===id?{...x,qty:x.qty+d}:x).filter(x=>x.qty>0));
   const finish=()=>{if(!cart.length)return;setSuccess(true);setCart([]);setCustomer("");setDiscount(0)};
-  const askCustomer=()=>{const value=window.prompt("Nome ou telefone do cliente:",customer);if(value!==null){setCustomer(value.trim());notify(value.trim()?"Cliente adicionado ao pedido.":"Cliente removido do pedido.")}};
-  const askDiscount=()=>{const value=window.prompt("Valor do desconto em reais:","0");if(value===null)return;const amount=Math.max(0,Math.min(subtotal,Number(value.replace(",","."))||0));setDiscount(amount);notify(amount?`Desconto de ${money(amount)} aplicado.`:"Desconto removido.")};
-  return <AppShell active="Novo pedido"><main className="pos-page"><section className={`catalog ${mobileCart?"mobile-hidden":""}`}><div className="pos-head"><div><small>NOVO PEDIDO</small><h1>O que vamos vender hoje?</h1></div><label className="search">⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar produto..." /></label></div><div className="category-row">{categories.map(c=><button className={c===category?"active":""} onClick={()=>setCategory(c)} key={c}>{c}</button>)}</div><div className="product-grid">{shown.map(p=><button className="product-card" key={p.id} onClick={()=>add(p)}><span>{p.emoji}</span><div><small>{p.category.toUpperCase()}</small><h3>{p.name}</h3><p>{p.description}</p><footer><b>{money(p.price)}</b><i>＋</i></footer></div></button>)}</div>{!shown.length&&<div className="no-results">Nenhum produto encontrado.</div>}</section><aside className={`cart-panel ${mobileCart?"mobile-open":""}`}><div className="cart-title"><div><small>PEDIDO ATUAL</small><h2>Carrinho <span>{cart.reduce((s,i)=>s+i.qty,0)}</span></h2></div><button onClick={()=>{setCart([]);setDiscount(0)}}>Limpar</button></div><button className="cart-customer" onClick={askCustomer}><span>{customer?"✓":"＋"}</span><div><b>{customer||"Adicionar cliente"}</b><small>{customer?"Cliente identificado":"Nome ou telefone (opcional)"}</small></div><i>›</i></button><div className="cart-items">{!cart.length?<div className="empty-cart"><span>🛒</span><b>Seu carrinho está vazio</b><p>Escolha um produto para começar o pedido.</p></div>:cart.map(i=><div className="cart-item" key={i.id}><span>{i.emoji}</span><div><b>{i.name}</b><small>{money(i.price)}</small><div className="qty"><button onClick={()=>qty(i.id,-1)}>−</button><b>{i.qty}</b><button onClick={()=>qty(i.id,1)}>＋</button></div></div><strong>{money(i.price*i.qty)}</strong></div>)}</div><div className="cart-total"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>Desconto</span><button onClick={askDiscount}>{discount?`− ${money(discount)}`:"Adicionar"}</button></div><div className="grand"><span>Total</span><b>{money(total)}</b></div><button className="button primary full" disabled={!cart.length} onClick={finish}>Finalizar pedido <span>→</span></button><small>O pedido será registrado como finalizado</small></div></aside><button className="mobile-cart-button" onClick={()=>setMobileCart(!mobileCart)}>{mobileCart?"← Voltar ao cardápio":`Ver carrinho • ${money(total)}`}</button>{success&&<div className="modal-backdrop"><div className="success-modal"><span>✓</span><small>PEDIDO FINALIZADO</small><h2>Venda registrada!</h2><p>Pedido <b>#1049</b> concluído com sucesso.</p><div><button className="button outline" onClick={()=>window.print()}>⌑ Imprimir</button><button className="button primary" onClick={()=>setSuccess(false)}>Novo pedido</button></div></div></div>}</main></AppShell>;
+  const confirmCustomer=(value:string)=>{setCustomer(value.trim());setEditor(null);notify(value.trim()?"Cliente adicionado ao pedido.":"Cliente removido do pedido.")};
+  const confirmDiscount=(value:string)=>{const amount=Math.max(0,Math.min(subtotal,Number(value.replace(",","."))||0));setDiscount(amount);setEditor(null);notify(amount?`Desconto de ${money(amount)} aplicado.`:"Desconto removido.")};
+  return <AppShell active="Novo pedido"><main className="pos-page"><section className={`catalog ${mobileCart?"mobile-hidden":""}`}><div className="pos-head"><div><small>NOVO PEDIDO</small><h1>O que vamos vender hoje?</h1></div><label className="search">⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar produto..." /></label></div><div className="category-row">{categories.map(c=><button className={c===category?"active":""} onClick={()=>setCategory(c)} key={c}>{c}</button>)}</div><div className="product-grid">{shown.map(p=><button className="product-card" key={p.id} onClick={()=>add(p)}><span>{p.emoji}</span><div><small>{p.category.toUpperCase()}</small><h3>{p.name}</h3><p>{p.description}</p><footer><b>{money(p.price)}</b><i>＋</i></footer></div></button>)}</div>{!shown.length&&<div className="no-results">Nenhum produto encontrado.</div>}</section><aside className={`cart-panel ${mobileCart?"mobile-open":""}`}><div className="cart-title"><div><small>PEDIDO ATUAL</small><h2>Carrinho <span>{cart.reduce((s,i)=>s+i.qty,0)}</span></h2></div><button onClick={()=>{setCart([]);setDiscount(0)}}>Limpar</button></div><button className="cart-customer" onClick={()=>setEditor("customer")}><span>{customer?"✓":"＋"}</span><div><b>{customer||"Adicionar cliente"}</b><small>{customer?"Cliente identificado":"Nome ou telefone (opcional)"}</small></div><i>›</i></button><div className="cart-items">{!cart.length?<div className="empty-cart"><span>🛒</span><b>Seu carrinho está vazio</b><p>Escolha um produto para começar o pedido.</p></div>:cart.map(i=><div className="cart-item" key={i.id}><span>{i.emoji}</span><div><b>{i.name}</b><small>{money(i.price)}</small><div className="qty"><button aria-label={`Diminuir ${i.name}`} onClick={()=>qty(i.id,-1)}>−</button><b>{i.qty}</b><button aria-label={`Aumentar ${i.name}`} onClick={()=>qty(i.id,1)}>＋</button></div></div><strong>{money(i.price*i.qty)}</strong></div>)}</div><div className="cart-total"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>Desconto</span><button onClick={()=>setEditor("discount")}>{discount?`− ${money(discount)}`:"Adicionar"}</button></div><div className="grand"><span>Total</span><b>{money(total)}</b></div><button className="button primary full" disabled={!cart.length} onClick={finish}>Finalizar pedido <span>→</span></button><small>O pedido será registrado como finalizado</small></div></aside><button className="mobile-cart-button" onClick={()=>setMobileCart(!mobileCart)}>{mobileCart?"← Voltar ao cardápio":`Ver carrinho • ${money(total)}`}</button>{editor==="customer"&&<InputModal title="Identificar cliente" label="Nome ou telefone" initialValue={customer} confirmLabel="Adicionar ao pedido" onClose={()=>setEditor(null)} onConfirm={confirmCustomer}/>} {editor==="discount"&&<InputModal title="Aplicar desconto" label="Valor em reais" initialValue={discount?String(discount):""} inputType="number" confirmLabel="Aplicar desconto" onClose={()=>setEditor(null)} onConfirm={confirmDiscount}/>} {success&&<div className="modal-backdrop"><div className="success-modal"><span>✓</span><small>PEDIDO FINALIZADO</small><h2>Venda registrada!</h2><p>Pedido <b>#1049</b> concluído com sucesso.</p><div><button className="button outline" onClick={()=>window.print()}>⌑ Imprimir</button><button className="button primary" onClick={()=>setSuccess(false)}>Novo pedido</button></div></div></div>}</main></AppShell>;
 }
 
 function Analytics() {
@@ -287,10 +358,11 @@ function Products() {
   const [products,setProducts]=useState(PRODUCTS);
   const [query,setQuery]=useState("");
   const [filter,setFilter]=useState("Todos");
+  const [addOpen,setAddOpen]=useState(false);
   const filtered=products.filter(p=>p.name.toLowerCase().includes(query.toLowerCase())&&(filter==="Todos"||(filter==="Ativos"?(p.active!==false):(p.active===false))));
-  const addProduct=()=>{const name=window.prompt("Nome do novo produto:");if(!name?.trim())return;setProducts([...products,{id:Date.now(),name:name.trim(),category:"Açaí",price:12.9,emoji:"✨",description:"Novo produto",active:true}]);notify("Produto adicionado ao catálogo.")};
+  const addProduct=(name:string)=>{if(!name.trim())return;setProducts([...products,{id:Date.now(),name:name.trim(),category:"Açaí",price:12.9,emoji:"✨",description:"Novo produto",active:true}]);setAddOpen(false);notify("Produto adicionado ao catálogo.")};
   const toggleProduct=(id:number)=>{setProducts(products.map(p=>p.id===id?{...p,active:p.active===false}:p));notify("Disponibilidade do produto atualizada.")};
-  return <AppShell active="Produtos"><main className="dashboard-page"><div className="dash-head"><div><small>CATÁLOGO</small><h1>Produtos</h1><p>Gerencie seu cardápio, preços e disponibilidade.</p></div><button className="button primary" onClick={addProduct}>＋ Adicionar produto</button></div><div className="product-tools"><label className="search">⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar por nome..." /></label><div>{["Todos","Ativos","Inativos"].map(f=><button key={f} className={filter===f?"active":""} onClick={()=>setFilter(f)}>{f}{f==="Todos"&&<span>{products.length}</span>}</button>)}</div></div><section className="dash-card product-table"><table><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Status</th><th>Ação</th></tr></thead><tbody>{filtered.map(p=><tr key={p.id}><td><div className="table-product"><span>{p.emoji}</span><div><b>{p.name}</b><small>{p.description}</small></div></div></td><td><span className="category-badge">{p.category}</span></td><td><b>{money(p.price)}</b></td><td><span className={`status ${p.active===false?"inactive":""}`}>● {p.active===false?"Inativo":"Ativo"}</span></td><td><button className="row-action" onClick={()=>toggleProduct(p.id)}>{p.active===false?"Ativar":"Desativar"}</button></td></tr>)}</tbody></table>{!filtered.length&&<div className="no-results">Nenhum produto neste filtro.</div>}</section><div className="limit-bar"><span><b>{products.length} de 30</b> produtos cadastrados</span><i><b style={{width:`${products.length/30*100}%`}} /></i><small>Plano Profissional</small></div></main></AppShell>;
+  return <AppShell active="Produtos"><main className="dashboard-page"><div className="dash-head"><div><small>CATÁLOGO</small><h1>Produtos</h1><p>Gerencie seu cardápio, preços e disponibilidade.</p></div><button className="button primary" onClick={()=>setAddOpen(true)}>＋ Adicionar produto</button></div><div className="product-tools"><label className="search">⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar por nome..." /></label><div>{["Todos","Ativos","Inativos"].map(f=><button key={f} className={filter===f?"active":""} onClick={()=>setFilter(f)}>{f}{f==="Todos"&&<span>{products.length}</span>}</button>)}</div></div><section className="dash-card product-table"><table><thead><tr><th>Produto</th><th>Categoria</th><th>Preço</th><th>Status</th><th>Ação</th></tr></thead><tbody>{filtered.map(p=><tr key={p.id}><td><div className="table-product"><span>{p.emoji}</span><div><b>{p.name}</b><small>{p.description}</small></div></div></td><td><span className="category-badge">{p.category}</span></td><td><b>{money(p.price)}</b></td><td><span className={`status ${p.active===false?"inactive":""}`}>● {p.active===false?"Inativo":"Ativo"}</span></td><td><button className="row-action" onClick={()=>toggleProduct(p.id)}>{p.active===false?"Ativar":"Desativar"}</button></td></tr>)}</tbody></table>{!filtered.length&&<div className="no-results">Nenhum produto neste filtro.</div>}</section><div className="limit-bar"><span><b>{products.length} de 30</b> produtos cadastrados</span><i><b style={{width:`${products.length/30*100}%`}} /></i><small>Plano Profissional</small></div>{addOpen&&<InputModal title="Adicionar produto" label="Nome do produto" confirmLabel="Adicionar ao catálogo" onClose={()=>setAddOpen(false)} onConfirm={addProduct}/>}</main></AppShell>;
 }
 
 function Settings() {
