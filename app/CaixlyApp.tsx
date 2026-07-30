@@ -282,13 +282,20 @@ function CheckIn() {
       }
       const supabase=getSupabaseBrowserClient();
       if(mode==="login"){
-        const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
+        const {data,error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
         if(error)throw error;
-        navigate("/Home");
+        const {data:membership,error:membershipError}=await supabase.from("tenant_memberships").select("tenant_id").eq("user_id",data.user.id).eq("active",true).limit(1).maybeSingle();
+        if(membershipError)throw membershipError;
+        navigate(membership?"/Home":"/Onboarding");
       }else if(mode==="signup"){
-        const {error}=await supabase.auth.signUp({email:email.trim(),password,options:{data:{full_name:fullName.trim()}}});
+        const {data,error}=await supabase.auth.signUp({email:email.trim(),password,options:{data:{full_name:fullName.trim()},emailRedirectTo:`${window.location.origin}/Login`}});
         if(error)throw error;
-        setFeedback("Conta criada. Confira seu e-mail para confirmar o acesso.");
+        if(data.session){
+          navigate("/Onboarding");
+        }else{
+          setMode("login");
+          setFeedback("Conta criada. Confira seu e-mail para confirmar o acesso e depois entre no portal.");
+        }
       }else{
         const {error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/Login`});
         if(error)throw error;
@@ -391,7 +398,24 @@ function SaaSOwnerPanel() {
 
 function Onboarding() {
   const [step,setStep]=useState(1);
-  return <main className="onboarding"><header><Logo /><span>Precisa de ajuda? <b>Fale com a gente</b></span></header><div className="onboard-wrap"><div className="steps"><i className="active">1</i><span className={step>1?"done":""}/><i className={step>1?"active":""}>2</i><span/><i>3</i></div>{step===1?<section><small>VAMOS COMEÇAR</small><h1>Conte um pouco sobre<br />o seu negócio.</h1><p>Isso ajuda a deixar o Caixly pronto para você.</p><div className="business-grid">{SEGMENTS.map(([e,n])=><button key={n} onClick={()=>setStep(2)}><span>{e}</span><b>{n}</b></button>)}</div></section>:<section><small>QUASE LÁ</small><h1>Como podemos chamar<br />o seu negócio?</h1><p>Você poderá alterar essas informações depois.</p><div className="onboard-form"><label>Nome do estabelecimento<input autoFocus placeholder="Ex.: Bosque Açaí" /></label><label>Endereço<input placeholder="Rua, número e cidade" /></label><label>Ponto de atendimento<input placeholder="Ex.: Balcão principal" /></label><button className="button primary full" onClick={()=>navigate("/Home")}>Criar meu espaço →</button></div></section>}</div></main>;
+  const [segment,setSegment]=useState("");
+  const [businessName,setBusinessName]=useState("");
+  const [address,setAddress]=useState("");
+  const [storeName,setStoreName]=useState("Loja principal");
+  const [loading,setLoading]=useState(false);
+  const [feedback,setFeedback]=useState("");
+  const createWorkspace=async()=>{
+    if(!businessName.trim()){setFeedback("Informe o nome do estabelecimento.");return}
+    setLoading(true);setFeedback("");
+    try{
+      if(!isSupabaseConfigured()){navigate("/Home");return}
+      const {error}=await getSupabaseBrowserClient().rpc("create_tenant_with_owner",{company_legal_name:businessName.trim(),company_trade_name:businessName.trim(),first_store_name:storeName.trim()||"Loja principal"});
+      if(error)throw error;
+      notify(`${businessName.trim()} foi criada com sucesso.`);
+      navigate("/Home");
+    }catch(error){setFeedback(error instanceof Error?error.message:"Não foi possível criar sua empresa.")}finally{setLoading(false)}
+  };
+  return <main className="onboarding"><header><button className="brand-button" onClick={()=>navigate("/LandingPage")}><Logo /></button><button className="onboard-exit" onClick={()=>navigate("/Login")}>Sair e voltar ao login</button></header><div className="onboard-wrap"><div className="steps"><i className="active">1</i><span className={step>1?"done":""}/><i className={step>1?"active":""}>2</i></div>{step===1?<section><small>ETAPA 1 DE 2</small><h1>Qual é o tipo<br />do seu negócio?</h1><p>Vamos personalizar o Caixly para sua operação.</p><div className="business-grid">{SEGMENTS.map(([e,n])=><button className={segment===n?"selected":""} key={n} onClick={()=>{setSegment(n);setStep(2)}}><span>{e}</span><b>{n}</b></button>)}</div></section>:<section><small>ETAPA 2 DE 2 • {segment.toUpperCase()}</small><h1>Agora crie sua<br />primeira empresa.</h1><p>Você será o Administrador e poderá convidar sua equipe depois.</p><div className="onboard-form"><label>Nome do estabelecimento<input autoFocus value={businessName} onChange={event=>setBusinessName(event.target.value)} placeholder="Ex.: Bosque Açaí" /></label><label>Endereço<input value={address} onChange={event=>setAddress(event.target.value)} placeholder="Rua, número e cidade" /></label><label>Nome da primeira filial<input value={storeName} onChange={event=>setStoreName(event.target.value)} placeholder="Ex.: Loja Centro" /></label>{feedback&&<div className="auth-feedback">{feedback}</div>}<div className="onboard-actions"><button className="button outline" onClick={()=>setStep(1)}>← Voltar</button><button className="button primary" disabled={loading} onClick={createWorkspace}>{loading?"Criando...":"Criar empresa e entrar →"}</button></div></div></section>}</div></main>;
 }
 
 function SegmentPage({name,emoji}:{name:string,emoji:string}) {
@@ -412,7 +436,20 @@ function InfoPage({kind}:{kind:string}) {
 
 function CaixlyRoute() {
   const [path,setPath]=useState("/");
+  const [authReady,setAuthReady]=useState(!isSupabaseConfigured());
+  const [signedIn,setSignedIn]=useState(!isSupabaseConfigured());
   useEffect(()=>{const sync=()=>setPath(window.location.pathname);sync();window.addEventListener("popstate",sync);return()=>window.removeEventListener("popstate",sync)},[]);
+  useEffect(()=>{
+    if(!isSupabaseConfigured())return;
+    const supabase=getSupabaseBrowserClient();
+    supabase.auth.getSession().then(({data})=>{setSignedIn(Boolean(data.session));setAuthReady(true)});
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{setSignedIn(Boolean(session));setAuthReady(true)});
+    return()=>subscription.unsubscribe();
+  },[]);
+  const privatePaths=["/Home","/PDV","/Dashboard","/DashboardPremium","/Produtos","/ProductsManagement","/ProdutosNovo","/ConfiguracoesLoja","/Admin","/Equipe","/SaaSAdmin","/Onboarding"];
+  const needsAuth=privatePaths.includes(path);
+  useEffect(()=>{if(authReady&&needsAuth&&!signedIn)navigate("/Login")},[authReady,needsAuth,signedIn]);
+  if(!authReady||(needsAuth&&!signedIn))return <main className="auth-loading"><Logo/><span>Verificando seu acesso...</span></main>;
   if(path==="/"||path==="/Index"||path==="/LandingPage") return <Landing/>;
   if(path==="/CheckIn"||path==="/acesso"||path==="/Login"||path==="/Register") return <CheckIn/>;
   if(path==="/Home") return <HomeDashboard/>;
