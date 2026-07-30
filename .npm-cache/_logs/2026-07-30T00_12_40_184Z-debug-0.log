@@ -1,0 +1,26 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.13.0
+2 info using node@v24.16.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\lucas\.codex\.chatgpt-projects\g-p-6a6a95efe3888191aa84bda1f16d11b6\.npmrc
+5 silly config load:file:C:\Users\lucas\.npmrc
+6 silly config load:file:C:\Users\lucas\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm install framer-motion lucide-react recharts
+8 verbose argv "install" "framer-motion" "lucide-react" "recharts" "--ignore-scripts" "--no-audit" "--no-fund" "--cache" ".npm-cache"
+9 verbose logfile logs-max:10 dir:C:\Users\lucas\.codex\.chatgpt-projects\g-p-6a6a95efe3888191aa84bda1f16d11b6\.npm-cache\_logs\2026-07-30T00_12_40_184Z-
+10 verbose logfile C:\Users\lucas\.codex\.chatgpt-projects\g-p-6a6a95efe3888191aa84bda1f16d11b6\.npm-cache\_logs\2026-07-30T00_12_40_184Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 silly idealTree buildDeps
+14 silly fetch manifest framer-motion@*
+15 silly packumentCache full:https://registry.npmjs.org/framer-motion cache-miss
+16 http fetch GET https://registry.npmjs.org/npm attempt 1 failed with EACCES
+17 http fetch GET https://registry.npmjs.org/framer-motion attempt 1 failed with EACCES
+18 http fetch GET https://registry.npmjs.org/npm attempt 2 failed with EACCES
+19 http fetch GET https://registry.npmjs.org/framer-motion attempt 2 failed with EACCES
+20 http fetch GET https://registry.npmjs.org/npm attempt 3 failed with EACCES
+21 http fetch GET https://registry.npmjs.org/framer-motion attempt 3 failed with EACCES
+22 silly fetch manifest lucide-react@*
+23 silly packumentCache full:https://registry.npmjs.org/lucide-react cache-miss
+24 http fetch GET https://registry.npmjs.org/lucide-react attempt 1 failed with EACCES
+25 http fetch GET https://registry.npmjs.org/lucide-react attempt 2 failed with EACCES
