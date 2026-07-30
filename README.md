@@ -33,6 +33,17 @@ O papel Super Admin pertence exclusivamente ao dono do Caixly e não pode ser
 visualizado, criado ou atribuído por empresas clientes. Autorizações sensíveis
 devem ser validadas no servidor e registradas em trilha de auditoria.
 
+## Backend Supabase
+
+O Caixly usa Supabase como núcleo de dados e autenticação. A migração inicial
+está em `supabase/migrations/202607300001_caixly_core.sql` e inclui isolamento
+multi-tenant por RLS, funções de Administrador, Gerente e Operador, vendas,
+estoque, caixas, pagamentos, documentos fiscais, assinaturas e auditoria.
+
+Copie `.env.example` para `.env.local` e preencha os valores públicos do
+projeto. A chave `service_role` deve existir somente no servidor e nos secrets
+de produção.
+
 ## Deploy na Cloudflare
 
 O workflow `.github/workflows/deploy-cloudflare.yml` valida e publica a branch
